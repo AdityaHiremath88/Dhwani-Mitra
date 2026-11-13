@@ -1,152 +1,165 @@
 # Dhvani Mitra
 
-Dhvani Mitra is an assistive sound-awareness prototype. A laptop microphone feeds ambient audio to a local YAMNet detector. When the detector recognizes one of the configured sound categories, a FastAPI bridge sends its haptic pattern to an ESP32-C6 wristband over Wi-Fi. The web dashboard displays connection status, detections, history, and vibration settings.
+<p align="center">
+  <strong>An assistive sound-awareness system with customizable haptic alerts.</strong>
+</p>
 
-```text
-Microphone → YAMNet detector → FastAPI/WebSocket bridge → ESP32-C6 → TB6612FNG → vibration motor
-                                      ↕
-                                React dashboard
+<p align="center">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20ESP32--C6-blue">
+  <img alt="AI" src="https://img.shields.io/badge/audio%20model-YAMNet-orange">
+  <img alt="Backend" src="https://img.shields.io/badge/backend-FastAPI-009688">
+  <img alt="Frontend" src="https://img.shields.io/badge/frontend-React%20%2B%20Vite-61DAFB">
+  <img alt="Firmware" src="https://img.shields.io/badge/firmware-ESP--IDF-E7352C">
+  <img alt="Recognition" src="https://img.shields.io/badge/hackathon-3rd%20Prize-gold">
+</p>
+
+Dhvani Mitra is an assistive-technology prototype that recognizes selected environmental sounds and communicates alerts through a wearable vibration motor. A local audio-classification process identifies configured sound categories; a FastAPI service routes events and haptic commands; an ESP32-C6 drives the motor through a TB6612FNG motor driver; and a React dashboard provides monitoring, history, device status, and vibration-pattern customization.
+
+The project was developed as a hackathon prototype and received **3rd Prize**. This repository is intended to help students, engineers, researchers, and contributors understand and reproduce the implementation.
+
+> **Scope and safety:** Dhvani Mitra is an experimental prototype, not a certified assistive device or emergency-warning system. It must not be used as the sole means of detecting hazards or protecting a person.
+
+## At a glance
+
+| Layer | Current implementation |
+|---|---|
+| Audio input | Microphone connected to the host laptop |
+| Sound inference | Python + TensorFlow Hub YAMNet |
+| Audio sample rate for inference | 16 kHz mono waveform |
+| Sound categories | Alarm, vehicle horn, doorbell, knocking, siren |
+| Application bridge | FastAPI REST API + WebSockets |
+| User interface | React + Vite |
+| Wearable controller | ESP32-C6 |
+| Motor driver | TB6612FNG, channel A |
+| Haptic output | One vibration motor in the documented active wristband build |
+| Configuration | JSON pattern storage in the backend; browser-local UI preferences |
+| Network | Local Wi-Fi network; laptop and ESP32-C6 must be reachable on the same LAN |
+
+**Important architecture note:** The active end-to-end detector currently runs on the laptop. The ESP32-C6 wristband receives haptic commands; it does not run YAMNet or perform the active sound classification. A separate ESP32-C6 diagnostic firmware project tests an INMP441 I2S microphone and motor output on the bench. That diagnostic project is not the active end-to-end detection path.
+
+## How it works
+
+```mermaid
+flowchart TD
+    A[Ambient sound] --> B[Laptop microphone]
+    B --> C[Python audio capture]
+    C --> D[Resample to 16 kHz]
+    D --> E[YAMNet inference]
+    E --> F[Category scoring and temporal confirmation]
+    F -->|Confirmed category event| G[FastAPI bridge]
+    G --> H[WebSocket haptic command]
+    H --> I[ESP32-C6]
+    I --> J[TB6612FNG channel A]
+    J --> K[Vibration motor]
+    G <--> L[React dashboard]
 ```
 
-The detector processes audio locally and sends event labels and scores to FastAPI; it does not stream raw microphone audio. This prototype currently maps five categories: alarm, vehicle horn, doorbell, knocking, and siren.
+The detector sends category events and scores to the backend. It does **not** send the raw microphone waveform to FastAPI. See [Architecture](docs/ARCHITECTURE.md) for component responsibilities and message flow.
+
+## Supported sound categories
+
+| Category ID | User-facing label | Example AudioSet labels mapped by the detector |
+|---|---|---|
+| `ALARM` | Alarm | Alarm clock, smoke detector, fire alarm, car alarm, buzzer |
+| `VEHICLE_HORN` | Vehicle horn | Vehicle horn, air horn, train horn |
+| `DOORBELL` | Doorbell | Doorbell |
+| `KNOCKING` | Knocking | Knock |
+| `SIREN` | Siren | Siren, civil defense siren, police/ambulance/fire-engine siren |
+
+The detector uses YAMNet's AudioSet class scores to form project-level categories. A displayed score is an aggregated model score; it is **not a calibrated probability** that an alert is correct. See [Detection pipeline](docs/ARCHITECTURE.md#sound-detection-pipeline).
 
 ## Repository layout
 
-| Path | Contents |
-| --- | --- |
-| `web/` | React/Vite dashboard |
-| `backend/` | FastAPI REST and WebSocket bridge, saved vibration patterns |
-| `detector/` | Laptop microphone capture and YAMNet classification |
-| `firmware/wristband/` | ESP-IDF Wi-Fi and haptic firmware for ESP32-C6 |
-| `firmware/hardware_diagnostic/` | Separate I2S microphone and manual motor diagnostic firmware |
-
-## Requirements
-
-- Windows 10/11 for the supplied PowerShell launch scripts (other OSes can run the Python and Node commands directly)
-- Python 3.10 or newer
-- Node.js 18 or newer and npm
-- ESP-IDF 6.1 for building and flashing the ESP32-C6 firmware
-- ESP32-C6 board, TB6612FNG motor driver, and vibration motor
-- A shared 2.4 GHz Wi-Fi network for the laptop and wristband
-
-The first YAMNet run downloads the model and AudioSet labels through TensorFlow Hub. An internet connection is needed for that initial download.
-
-## Run the system
-
-Open separate PowerShell terminals from the repository root.
-
-### 1. Install and start FastAPI
-
-```powershell
-py -3.11 -m venv .venv-backend
-.\.venv-backend\Scripts\Activate.ps1
-pip install -r .\backend\requirements.txt
-python -m uvicorn app.main:app --app-dir .\backend --host 0.0.0.0 --port 8000
-```
-
-Keep this terminal open. The backend serves the API and WebSockets on port `8000`. When Windows Firewall prompts, allow Python on the network the laptop and ESP32 share.
-
-### 2. Install and start the dashboard
-
-```powershell
-cd .\web
-npm install
-npm run dev
-```
-
-Open <http://localhost:5173>. For access from another device on the same network, use the laptop's LAN address instead of `localhost`.
-
-### 3. Install and start the YAMNet detector
-
-In another terminal at the repository root:
-
-```powershell
-py -3.11 -m venv .venv-detector
-.\.venv-detector\Scripts\Activate.ps1
-pip install -r .\detector\requirements.txt
-```
-
-Select the desired Windows input device under **Settings → System → Sound → Input**, then run:
-
-```powershell
-Remove-Item Env:DHVANI_MIC_DEVICE -ErrorAction SilentlyContinue
-.\detector\run_laptop_mic.ps1
-```
-
-If `DHVANI_MIC_DEVICE` is already set in the terminal, remove it as shown above to return to the Windows default. To pin a particular input device instead, set a substring of its device name first, for example:
-
-```powershell
-$env:DHVANI_MIC_DEVICE = 'AB13X USB Audio'
-.\detector\run_laptop_mic.ps1
-```
-
-The detector reports the selected device in its terminal and sends microphone level and confirmed category events to FastAPI. Keep the detector running while listening. Press Ctrl+C to stop it.
-
-### 4. Build, flash, and connect the wristband
-
-Use an ESP-IDF 6.1 PowerShell environment. Connect the motor through the TB6612FNG driver; do not connect a motor directly to an ESP32 GPIO.
-
-| TB6612FNG | ESP32-C6 |
-| --- | --- |
-| PWMA | GPIO10 |
-| AIN1 | GPIO11 |
-| AIN2 | GPIO18 |
-| STBY | GPIO21 |
-| AO1 / AO2 | Vibration motor terminals |
-
-From the repository root in an ESP-IDF terminal:
-
-```powershell
-idf.py -C .\firmware\wristband set-target esp32c6
-idf.py -C .\firmware\wristband build
-idf.py -C .\firmware\wristband -p COMx flash monitor
-```
-
-Replace `COMx` with the board's port in Windows Device Manager. At the firmware serial prompt, provision the same 2.4 GHz Wi-Fi network used by the laptop:
-
 ```text
-wifi <SSID>|<password>|<laptop IPv4 address>
+.
+├── backend/
+│   ├── app/
+│   │   ├── main.py              # FastAPI routes, WebSocket bridge and event routing
+│   │   ├── schemas.py           # Pydantic message and validation models
+│   │   └── storage.py           # Pattern and detection-history persistence
+│   ├── data/                    # Runtime JSON data (created by the backend)
+│   └── requirements.txt
+├── detector/
+│   ├── live_detector.py         # Laptop microphone capture and YAMNet inference
+│   ├── run_laptop_mic.ps1       # Windows launcher
+│   ├── README.md
+│   └── requirements.txt
+├── firmware/
+│   ├── wristband/               # Active ESP32-C6 Wi-Fi/WebSocket haptic firmware
+│   └── hardware_diagnostic/     # Separate INMP441/motor bench diagnostic
+├── web/
+│   ├── src/                     # React dashboard
+│   └── package.json
+├── docs/                        # Engineering documentation
+└── README.md
 ```
 
-The ESP32 stores these settings in NVS and reboots. Enter the laptop's current LAN IPv4 address, not `localhost`; re-provision if that address changes. Use `status` in the serial console to inspect Wi-Fi and bridge state, and `motor` to trigger one local 150 ms test pulse.
+## Quick start
 
-## Verify connections
+The complete, reproducible setup is documented in [Development setup](docs/DEVELOPMENT.md). The short version is:
 
-- `GET http://localhost:8000/api/health` — backend health and bridge status
-- `GET http://localhost:8000/api/status` — detector, mic, and wristband state
-- Dashboard connection badges — browser view of live clients
-- ESP32 serial `status` command — board Wi-Fi and WebSocket bridge state
+1. Install Python, Node.js, and ESP-IDF 6.1.
+2. Install backend and detector dependencies in separate Python virtual environments.
+3. Start the FastAPI backend on port `8000`.
+4. Start the React/Vite dashboard.
+5. Build, flash, and provision the ESP32-C6 wristband firmware.
+6. Start the laptop microphone detector.
+7. Confirm the detector and wristband are connected before running an end-to-end sound test.
 
-Keep the backend, detector, and dashboard running. The wristband should show a valid hotspot/LAN IP and `bridge=connected`; the dashboard should show the detector and wristband connected before end-to-end sound testing.
+The current supported launcher and commands are Windows PowerShell-oriented. Other operating systems may be usable with equivalent Python, Node.js, and ESP-IDF commands, but are not yet documented as verified platforms.
 
-## API and WebSocket routes
+## Documentation
 
-| Route | Purpose |
-| --- | --- |
-| `GET /api/health` | Health and connection summary |
-| `GET /api/status` | Live detector, microphone, and device state |
-| `GET /api/patterns` | Read saved category vibration patterns |
-| `PUT /api/patterns/{category}` | Update a vibration pattern |
-| `GET /api/history` | Read detection history |
-| `DELETE /api/history` | Clear detection history |
-| `/ws/web` | Dashboard updates and controls |
-| `/ws/detector` | YAMNet classification events and mic status |
-| `/ws/device` | ESP32 haptic commands and acknowledgements |
+| Document | What it covers |
+|---|---|
+| [System architecture](docs/ARCHITECTURE.md) | Components, data flow, detector logic, event lifecycle |
+| [Hardware guide](docs/HARDWARE.md) | Active wristband wiring, diagnostic microphone wiring, safety notes |
+| [Communication protocol](docs/PROTOCOL.md) | REST endpoints, WebSocket routes, event and haptic payloads |
+| [Development setup](docs/DEVELOPMENT.md) | Dependencies, setup, startup order, environment variables |
+| [Testing and validation](docs/TESTING.md) | Reproduction checklist, test matrix, metrics to report |
+| [Security and privacy](docs/SECURITY.md) | Audio handling, network exposure, credentials, limitations |
+| [Contributing](CONTRIBUTING.md) | How to propose changes and document test evidence |
 
-Patterns are stored in `backend/data/patterns.json`. Runtime detection history is local data and is excluded from Git.
+## Dashboard capabilities
 
-## Troubleshooting
+The React dashboard currently provides:
 
-- **Wristband disconnected:** Run `status` in its serial console. Confirm Wi-Fi is 2.4 GHz, laptop and board share the same network, the laptop IPv4 is current, and FastAPI listens on `0.0.0.0:8000`. If the ESP serial log shows a connection timeout and Windows marks the hotspot as Public, add a firewall rule scoped to the board's current IP from an elevated PowerShell:
+- Live system and connection status for the detector and wristband.
+- Current sound event and recent detection history.
+- Per-category haptic pattern customization.
+- Pattern preview and a physical wristband test command.
+- Device connection information and configuration synchronization.
+- JSON export and clearing of detection history.
+- Browser-local custom sound profiles for storing and playing recordings.
 
-  ```powershell
-  $espIp = Read-Host 'ESP32 IP from the serial status'
-  New-NetFirewallRule -DisplayName 'Dhvani Mitra ESP32 bridge' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8000 -RemoteAddress $espIp -Profile Public
-  ```
-- **Wrong microphone:** Select the intended input in Windows Sound settings and restart the detector. Check the detector terminal and dashboard for the selected device name. Set `DHVANI_MIC_DEVICE` to a device-name substring to choose it explicitly.
-- **No sound category appears:** First confirm the mic level changes while making sound near the microphone. YAMNet recognizes sound classes rather than matching any arbitrary noise; use a clear example of one of the five supported categories.
-- **Motor does not vibrate:** Use the ESP32 serial `motor` command to test the motor path independently, and check the TB6612FNG wiring and motor supply.
+**Custom sound profile limitation:** Adding a recording in the dashboard creates a browser-local profile only. It does not train YAMNet, add a new detector category, or make that sound automatically detectable.
 
-## Security and local settings
+## Current limitations
 
-Do not commit Wi-Fi passwords, personal `.env` files, build output, virtual environments, or microphone recordings. `.env.example` contains non-secret local configuration examples. The ESP32 Wi-Fi credentials are provisioned directly to device NVS and are not stored in this repository.
+The following are intentional scope boundaries of the repository as currently implemented:
+
+- Sound classification runs on the laptop, not on the ESP32-C6.
+- The active wristband firmware controls one motor through TB6612FNG channel A.
+- The INMP441 I2S code is a separate hardware diagnostic, not part of active inference.
+- The dashboard does not receive battery telemetry from the wristband.
+- Detection scores have not been documented as calibrated probabilities.
+- No benchmark dataset or validated precision/recall/latency results are included yet.
+- The backend and device WebSocket protocol are intended for a trusted local network; production authentication and transport encryption are not implemented.
+
+See [Testing and validation](docs/TESTING.md) and [Security and privacy](docs/SECURITY.md) before extending or deploying the prototype.
+
+## Recognition
+
+Dhvani Mitra received **3rd Prize** at a hackathon. Add the official event name, organizer, date, team details, and a link to the certificate or event announcement here when those details are ready.
+
+## Contributing
+
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or pull request. For changes to detection logic, include reproducible audio conditions and measured results; for hardware changes, include the board revision, wiring, power arrangement, and test procedure.
+
+## Acknowledgements
+
+This project was developed by a two-member team. Add contributor names, roles, mentor acknowledgements, and event-organizer acknowledgements here with the contributors' agreement.
+
+## License
+
+No license is declared by this documentation pack. Before accepting external contributions or encouraging reuse, the repository owner should choose and add an explicit open-source license. Until then, do not assume that public visibility grants permission to reuse the source.
